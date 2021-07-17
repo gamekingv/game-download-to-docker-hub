@@ -1,0 +1,77 @@
+name: baidu-download
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'baidu-list.txt'
+  workflow_dispatch:
+    # inputs:
+    #   type:
+    #     description: 'dispatch type'
+    #     required: false
+    #     default: ''
+    #   list:
+    #     description: 'download list'
+    #     required: false
+    #     default: ''
+    #   parent:
+    #     description: 'parent run id'
+    #     required: false
+    #     default: ''
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions/setup-node@v2
+        with:
+          node-version: '14'
+      - uses: actions/setup-python@v2
+        with:
+          python-version: '3.7'
+
+      # 安装环境
+      - name: Install Enviroment
+        run: |
+          pip3 install Cython
+          pip3 install BaiduPCS-Py
+          npm install
+          BaiduPCS-Py useradd --cookies "" --bduss "${{ secrets.BDUSS }}"
+
+      # 检查任务队列
+      # - name: Queue Check
+      #   run: |
+      #     node queue-check.js
+      #   env:
+      #     QUEUE_TOKEN: ${{ github.token }}
+      #     QUEUE_DB_HOST: ${{ secrets.DB_HOST }}
+      #     QUEUE_DB_USERNAME: ${{ secrets.DB_USERNAME }}
+      #     QUEUE_DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+
+      # 下载
+      - name: Download
+        run: |
+          cat baidu-list.txt | xargs -d '\n' -n1 -i BaiduPCS-Py download -o Offline -d aget_py "{}"
+
+      # 上传
+      - name: Upload
+        run: |
+          node upload.js
+        env:
+          QUEUE_DD_URL: ${{ secrets.URL }}
+          QUEUE_DD_USERNAME: ${{ secrets.USERNAME }}
+          QUEUE_DD_PASSWORD: ${{ secrets.PASSWORD }}
+          QUEUE_DB_URL: ${{ secrets.DB_URL }}
+          QUEUE_DB_APIKEY: ${{ secrets.DB_APIKEY }}
+
+      # 执行队列剩余任务
+      # - name: Queue Pop
+      #   run: |
+      #     node queue-pop.js
+      #   env:
+      #     QUEUE_TOKEN: ${{ github.token }}
+      #     QUEUE_DISPATCH_TOKEN: ${{ secrets.TOKEN }}
+      #     QUEUE_DB_HOST: ${{ secrets.DB_HOST }}
+      #     QUEUE_DB_USERNAME: ${{ secrets.DB_USERNAME }}
+      #     QUEUE_DB_PASSWORD: ${{ secrets.DB_PASSWORD }}

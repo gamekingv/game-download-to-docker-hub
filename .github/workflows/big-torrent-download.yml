@@ -1,0 +1,851 @@
+name: big-torrent-download
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'big-torrent-list.txt'
+  workflow_dispatch:
+    inputs:
+      type:
+        description: 'torrent type'
+        required: false
+        default: ''
+      torrent:
+        description: 'base64 torrent or magnet'
+        required: false
+        default: ''
+      file:
+        description: 'last downloaded file index'
+        required: false
+        default: ''
+
+jobs:
+  download_start:
+    runs-on: ubuntu-latest
+    outputs:
+      result: ${{ steps.download.outputs.result }}
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions/setup-node@v2
+        with:
+          node-version: '14'
+
+      # 安装环境
+      - name: Install Enviroment
+        run: |
+          sudo apt-get update
+          sudo apt-get install aria2
+          sudo apt-get install transmission-daemon
+          npm install
+          node fetchtracker.js
+          sudo service transmission-daemon stop
+          sudo node Initialize-transmission.js
+          sudo service transmission-daemon start
+
+      # 下载种子
+      - name: Save Torrent
+        if: ${{ github.event.inputs.type == 'torrent' }}
+        run: |
+          node saveTorrent.js
+      - name: Get Magnet
+        if: ${{ github.event.inputs.type == 'magnet'}}
+        run: |
+          echo "${{ github.event.inputs.torrent }}"
+          echo "${{ github.event.inputs.torrent }}" > big-torrent-list.txt
+          aria2c --conf-path=aria2.conf --bt-metadata-only=true --bt-save-metadata=true --follow-torrent=false --dir=./ -i big-torrent-list.txt
+      - name: Get Torrent
+        if: ${{ github.event.inputs.type == '' }}
+        run: |
+          cat big-torrent-list.txt
+          aria2c --conf-path=aria2.conf --bt-metadata-only=true --bt-save-metadata=true --follow-torrent=false --dir=./ -i big-torrent-list.txt
+
+      # 解析种子
+      - name: Analyze
+        id: analyze
+        run: |
+          mkdir Offline
+          chmod 777 -R ./Offline
+          echo "::set-output name=taskid::$(node analyze.js)"
+
+      # 监视下载
+      - name: Watch Download
+        id: download
+        run: |
+          node watch.js ${{ steps.analyze.outputs.taskid }}
+          echo "::set-output name=result::$(cat download-result.txt)"
+
+
+      # 清理多余文件
+      - name: Remove
+        if: ${{ steps.download.outputs.result == 'complete' }}
+        run: |
+          node remove.transmission.js
+
+      # 上传
+      - name: Upload
+        if: ${{ steps.download.outputs.result == 'complete' }}
+        run: |
+          node upload.js
+        env:
+          QUEUE_DD_URL: ${{ secrets.URL }}
+          QUEUE_DD_USERNAME: ${{ secrets.USERNAME }}
+          QUEUE_DD_PASSWORD: ${{ secrets.PASSWORD }}
+          QUEUE_DB_URL: ${{ secrets.DB_URL }}
+          QUEUE_DB_APIKEY: ${{ secrets.DB_APIKEY }}
+
+      # 执行剩余任务
+      - name: Dispatch Next Task
+        if: ${{ steps.download.outputs.result == 'complete' }}
+        run: |
+          node dispatchNext.js
+        env:
+          QUEUE_TOKEN: ${{ github.token }}
+          QUEUE_DISPATCH_TOKEN: ${{ secrets.TOKEN }}
+
+      # 保存未完成下载
+      - name: 'Compress'
+        if: ${{ steps.download.outputs.result == 'timeout' }}
+        run: |
+          tar -czvf uncomplete.tar.gz *.torrent download-files.json list.txt last-file.txt Offline
+      - name: 'Upload Artifact'
+        if: ${{ steps.download.outputs.result == 'timeout' }}
+        uses: actions/upload-artifact@v2
+        with:
+          name: download_folder
+          path: uncomplete.tar.gz
+          retention-days: 1
+
+
+  extend_1:
+    needs: download_start
+    if: ${{ needs.download_start.outputs.result == 'timeout' }}
+    runs-on: ubuntu-latest
+    outputs:
+      result: ${{ steps.download.outputs.result }}
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions/setup-node@v2
+        with:
+          node-version: '14'
+
+      # 安装环境
+      - name: Install Enviroment
+        run: |
+          sudo apt-get update
+          sudo apt-get install transmission-daemon
+          npm install
+          sudo service transmission-daemon stop
+          sudo node Initialize-transmission.js
+          sudo service transmission-daemon start
+
+      # 下载未完成文件
+      - name: Download Artifact
+        uses: actions/download-artifact@v2
+        with:
+          name: download_folder
+      - name: 'Decompress'
+        run: |
+          tar -zxvf uncomplete.tar.gz
+          rm -f uncomplete.tar.gz
+
+      # 解析种子
+      - name: Analyze
+        id: analyze
+        run: |
+          chmod 777 -R ./Offline
+          echo "::set-output name=taskid::$(node analyze.js)"
+
+      # 监视下载
+      - name: Watch Download
+        id: download
+        run: |
+          node watch.js ${{ steps.analyze.outputs.taskid }}
+          echo "::set-output name=result::$(cat download-result.txt)"
+
+      # 保存未完成下载
+      - name: 'Compress'
+        run: |
+          tar -czvf uncomplete.tar.gz *.torrent download-files.json list.txt last-file.txt Offline
+      - name: 'Upload Artifact'
+        uses: actions/upload-artifact@v2
+        with:
+          name: download_folder
+          path: uncomplete.tar.gz
+          retention-days: 1
+
+  extend_2:
+    needs: extend_1
+    if: ${{ needs.extend_1.outputs.result == 'timeout' }}
+    runs-on: ubuntu-latest
+    outputs:
+      result: ${{ steps.download.outputs.result }}
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions/setup-node@v2
+        with:
+          node-version: '14'
+
+      # 安装环境
+      - name: Install Enviroment
+        run: |
+          sudo apt-get update
+          sudo apt-get install transmission-daemon
+          npm install
+          sudo service transmission-daemon stop
+          sudo node Initialize-transmission.js
+          sudo service transmission-daemon start
+
+      # 下载未完成文件
+      - name: Download Artifact
+        uses: actions/download-artifact@v2
+        with:
+          name: download_folder
+      - name: 'Decompress'
+        run: |
+          tar -zxvf uncomplete.tar.gz
+          rm -f uncomplete.tar.gz
+
+      # 解析种子
+      - name: Analyze
+        id: analyze
+        run: |
+          chmod 777 -R ./Offline
+          echo "::set-output name=taskid::$(node analyze.js)"
+
+      # 监视下载
+      - name: Watch Download
+        id: download
+        run: |
+          node watch.js ${{ steps.analyze.outputs.taskid }}
+          echo "::set-output name=result::$(cat download-result.txt)"
+
+      # 保存未完成下载
+      - name: 'Compress'
+        run: |
+          tar -czvf uncomplete.tar.gz *.torrent download-files.json list.txt last-file.txt Offline
+      - name: 'Upload Artifact'
+        uses: actions/upload-artifact@v2
+        with:
+          name: download_folder
+          path: uncomplete.tar.gz
+          retention-days: 1
+
+  extend_3:
+    needs: extend_2
+    if: ${{ needs.extend_2.outputs.result == 'timeout' }}
+    runs-on: ubuntu-latest
+    outputs:
+      result: ${{ steps.download.outputs.result }}
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions/setup-node@v2
+        with:
+          node-version: '14'
+
+      # 安装环境
+      - name: Install Enviroment
+        run: |
+          sudo apt-get update
+          sudo apt-get install transmission-daemon
+          npm install
+          sudo service transmission-daemon stop
+          sudo node Initialize-transmission.js
+          sudo service transmission-daemon start
+
+      # 下载未完成文件
+      - name: Download Artifact
+        uses: actions/download-artifact@v2
+        with:
+          name: download_folder
+      - name: 'Decompress'
+        run: |
+          tar -zxvf uncomplete.tar.gz
+          rm -f uncomplete.tar.gz
+
+      # 解析种子
+      - name: Analyze
+        id: analyze
+        run: |
+          chmod 777 -R ./Offline
+          echo "::set-output name=taskid::$(node analyze.js)"
+
+      # 监视下载
+      - name: Watch Download
+        id: download
+        run: |
+          node watch.js ${{ steps.analyze.outputs.taskid }}
+          echo "::set-output name=result::$(cat download-result.txt)"
+
+      # 保存未完成下载
+      - name: 'Compress'
+        run: |
+          tar -czvf uncomplete.tar.gz *.torrent download-files.json list.txt last-file.txt Offline
+      - name: 'Upload Artifact'
+        uses: actions/upload-artifact@v2
+        with:
+          name: download_folder
+          path: uncomplete.tar.gz
+          retention-days: 1
+
+  extend_4:
+    needs: extend_3
+    if: ${{ needs.extend_3.outputs.result == 'timeout' }}
+    runs-on: ubuntu-latest
+    outputs:
+      result: ${{ steps.download.outputs.result }}
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions/setup-node@v2
+        with:
+          node-version: '14'
+
+      # 安装环境
+      - name: Install Enviroment
+        run: |
+          sudo apt-get update
+          sudo apt-get install transmission-daemon
+          npm install
+          sudo service transmission-daemon stop
+          sudo node Initialize-transmission.js
+          sudo service transmission-daemon start
+
+      # 下载未完成文件
+      - name: Download Artifact
+        uses: actions/download-artifact@v2
+        with:
+          name: download_folder
+      - name: 'Decompress'
+        run: |
+          tar -zxvf uncomplete.tar.gz
+          rm -f uncomplete.tar.gz
+
+      # 解析种子
+      - name: Analyze
+        id: analyze
+        run: |
+          chmod 777 -R ./Offline
+          echo "::set-output name=taskid::$(node analyze.js)"
+
+      # 监视下载
+      - name: Watch Download
+        id: download
+        run: |
+          node watch.js ${{ steps.analyze.outputs.taskid }}
+          echo "::set-output name=result::$(cat download-result.txt)"
+
+      # 保存未完成下载
+      - name: 'Compress'
+        run: |
+          tar -czvf uncomplete.tar.gz *.torrent download-files.json list.txt last-file.txt Offline
+      - name: 'Upload Artifact'
+        uses: actions/upload-artifact@v2
+        with:
+          name: download_folder
+          path: uncomplete.tar.gz
+          retention-days: 1
+
+  extend_5:
+    needs: extend_4
+    if: ${{ needs.extend_4.outputs.result == 'timeout' }}
+    runs-on: ubuntu-latest
+    outputs:
+      result: ${{ steps.download.outputs.result }}
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions/setup-node@v2
+        with:
+          node-version: '14'
+
+      # 安装环境
+      - name: Install Enviroment
+        run: |
+          sudo apt-get update
+          sudo apt-get install transmission-daemon
+          npm install
+          sudo service transmission-daemon stop
+          sudo node Initialize-transmission.js
+          sudo service transmission-daemon start
+
+      # 下载未完成文件
+      - name: Download Artifact
+        uses: actions/download-artifact@v2
+        with:
+          name: download_folder
+      - name: 'Decompress'
+        run: |
+          tar -zxvf uncomplete.tar.gz
+          rm -f uncomplete.tar.gz
+
+      # 解析种子
+      - name: Analyze
+        id: analyze
+        run: |
+          chmod 777 -R ./Offline
+          echo "::set-output name=taskid::$(node analyze.js)"
+
+      # 监视下载
+      - name: Watch Download
+        id: download
+        run: |
+          node watch.js ${{ steps.analyze.outputs.taskid }}
+          echo "::set-output name=result::$(cat download-result.txt)"
+
+      # 保存未完成下载
+      - name: 'Compress'
+        run: |
+          tar -czvf uncomplete.tar.gz *.torrent download-files.json list.txt last-file.txt Offline
+      - name: 'Upload Artifact'
+        uses: actions/upload-artifact@v2
+        with:
+          name: download_folder
+          path: uncomplete.tar.gz
+          retention-days: 1
+
+  extend_6:
+    needs: extend_5
+    if: ${{ needs.extend_5.outputs.result == 'timeout' }}
+    runs-on: ubuntu-latest
+    outputs:
+      result: ${{ steps.download.outputs.result }}
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions/setup-node@v2
+        with:
+          node-version: '14'
+
+      # 安装环境
+      - name: Install Enviroment
+        run: |
+          sudo apt-get update
+          sudo apt-get install transmission-daemon
+          npm install
+          sudo service transmission-daemon stop
+          sudo node Initialize-transmission.js
+          sudo service transmission-daemon start
+
+      # 下载未完成文件
+      - name: Download Artifact
+        uses: actions/download-artifact@v2
+        with:
+          name: download_folder
+      - name: 'Decompress'
+        run: |
+          tar -zxvf uncomplete.tar.gz
+          rm -f uncomplete.tar.gz
+
+      # 解析种子
+      - name: Analyze
+        id: analyze
+        run: |
+          chmod 777 -R ./Offline
+          echo "::set-output name=taskid::$(node analyze.js)"
+
+      # 监视下载
+      - name: Watch Download
+        id: download
+        run: |
+          node watch.js ${{ steps.analyze.outputs.taskid }}
+          echo "::set-output name=result::$(cat download-result.txt)"
+
+      # 保存未完成下载
+      - name: 'Compress'
+        run: |
+          tar -czvf uncomplete.tar.gz *.torrent download-files.json list.txt last-file.txt Offline
+      - name: 'Upload Artifact'
+        uses: actions/upload-artifact@v2
+        with:
+          name: download_folder
+          path: uncomplete.tar.gz
+          retention-days: 1
+
+  extend_7:
+    needs: extend_6
+    if: ${{ needs.extend_6.outputs.result == 'timeout' }}
+    runs-on: ubuntu-latest
+    outputs:
+      result: ${{ steps.download.outputs.result }}
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions/setup-node@v2
+        with:
+          node-version: '14'
+
+      # 安装环境
+      - name: Install Enviroment
+        run: |
+          sudo apt-get update
+          sudo apt-get install transmission-daemon
+          npm install
+          sudo service transmission-daemon stop
+          sudo node Initialize-transmission.js
+          sudo service transmission-daemon start
+
+      # 下载未完成文件
+      - name: Download Artifact
+        uses: actions/download-artifact@v2
+        with:
+          name: download_folder
+      - name: 'Decompress'
+        run: |
+          tar -zxvf uncomplete.tar.gz
+          rm -f uncomplete.tar.gz
+
+      # 解析种子
+      - name: Analyze
+        id: analyze
+        run: |
+          chmod 777 -R ./Offline
+          echo "::set-output name=taskid::$(node analyze.js)"
+
+      # 监视下载
+      - name: Watch Download
+        id: download
+        run: |
+          node watch.js ${{ steps.analyze.outputs.taskid }}
+          echo "::set-output name=result::$(cat download-result.txt)"
+
+      # 保存未完成下载
+      - name: 'Compress'
+        run: |
+          tar -czvf uncomplete.tar.gz *.torrent download-files.json list.txt last-file.txt Offline
+      - name: 'Upload Artifact'
+        uses: actions/upload-artifact@v2
+        with:
+          name: download_folder
+          path: uncomplete.tar.gz
+          retention-days: 1
+
+  extend_8:
+    needs: extend_7
+    if: ${{ needs.extend_7.outputs.result == 'timeout' }}
+    runs-on: ubuntu-latest
+    outputs:
+      result: ${{ steps.download.outputs.result }}
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions/setup-node@v2
+        with:
+          node-version: '14'
+
+      # 安装环境
+      - name: Install Enviroment
+        run: |
+          sudo apt-get update
+          sudo apt-get install transmission-daemon
+          npm install
+          sudo service transmission-daemon stop
+          sudo node Initialize-transmission.js
+          sudo service transmission-daemon start
+
+      # 下载未完成文件
+      - name: Download Artifact
+        uses: actions/download-artifact@v2
+        with:
+          name: download_folder
+      - name: 'Decompress'
+        run: |
+          tar -zxvf uncomplete.tar.gz
+          rm -f uncomplete.tar.gz
+
+      # 解析种子
+      - name: Analyze
+        id: analyze
+        run: |
+          chmod 777 -R ./Offline
+          echo "::set-output name=taskid::$(node analyze.js)"
+
+      # 监视下载
+      - name: Watch Download
+        id: download
+        run: |
+          node watch.js ${{ steps.analyze.outputs.taskid }}
+          echo "::set-output name=result::$(cat download-result.txt)"
+
+      # 保存未完成下载
+      - name: 'Compress'
+        run: |
+          tar -czvf uncomplete.tar.gz *.torrent download-files.json list.txt last-file.txt Offline
+      - name: 'Upload Artifact'
+        uses: actions/upload-artifact@v2
+        with:
+          name: download_folder
+          path: uncomplete.tar.gz
+          retention-days: 1
+
+  extend_9:
+    needs: extend_8
+    if: ${{ needs.extend_8.outputs.result == 'timeout' }}
+    runs-on: ubuntu-latest
+    outputs:
+      result: ${{ steps.download.outputs.result }}
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions/setup-node@v2
+        with:
+          node-version: '14'
+
+      # 安装环境
+      - name: Install Enviroment
+        run: |
+          sudo apt-get update
+          sudo apt-get install transmission-daemon
+          npm install
+          sudo service transmission-daemon stop
+          sudo node Initialize-transmission.js
+          sudo service transmission-daemon start
+
+      # 下载未完成文件
+      - name: Download Artifact
+        uses: actions/download-artifact@v2
+        with:
+          name: download_folder
+      - name: 'Decompress'
+        run: |
+          tar -zxvf uncomplete.tar.gz
+          rm -f uncomplete.tar.gz
+
+      # 解析种子
+      - name: Analyze
+        id: analyze
+        run: |
+          chmod 777 -R ./Offline
+          echo "::set-output name=taskid::$(node analyze.js)"
+
+      # 监视下载
+      - name: Watch Download
+        id: download
+        run: |
+          node watch.js ${{ steps.analyze.outputs.taskid }}
+          echo "::set-output name=result::$(cat download-result.txt)"
+
+      # 保存未完成下载
+      - name: 'Compress'
+        run: |
+          tar -czvf uncomplete.tar.gz *.torrent download-files.json list.txt last-file.txt Offline
+      - name: 'Upload Artifact'
+        uses: actions/upload-artifact@v2
+        with:
+          name: download_folder
+          path: uncomplete.tar.gz
+          retention-days: 1
+
+  extend_10:
+    needs: extend_9
+    if: ${{ needs.extend_9.outputs.result == 'timeout' }}
+    runs-on: ubuntu-latest
+    outputs:
+      result: ${{ steps.download.outputs.result }}
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions/setup-node@v2
+        with:
+          node-version: '14'
+
+      # 安装环境
+      - name: Install Enviroment
+        run: |
+          sudo apt-get update
+          sudo apt-get install transmission-daemon
+          npm install
+          sudo service transmission-daemon stop
+          sudo node Initialize-transmission.js
+          sudo service transmission-daemon start
+
+      # 下载未完成文件
+      - name: Download Artifact
+        uses: actions/download-artifact@v2
+        with:
+          name: download_folder
+      - name: 'Decompress'
+        run: |
+          tar -zxvf uncomplete.tar.gz
+          rm -f uncomplete.tar.gz
+
+      # 解析种子
+      - name: Analyze
+        id: analyze
+        run: |
+          chmod 777 -R ./Offline
+          echo "::set-output name=taskid::$(node analyze.js)"
+
+      # 监视下载
+      - name: Watch Download
+        id: download
+        run: |
+          node watch.js ${{ steps.analyze.outputs.taskid }}
+          echo "::set-output name=result::$(cat download-result.txt)"
+
+      # 保存未完成下载
+      - name: 'Compress'
+        run: |
+          tar -czvf uncomplete.tar.gz *.torrent download-files.json list.txt last-file.txt Offline
+      - name: 'Upload Artifact'
+        uses: actions/upload-artifact@v2
+        with:
+          name: download_folder
+          path: uncomplete.tar.gz
+          retention-days: 1
+
+  extend_11:
+    needs: extend_10
+    if: ${{ needs.extend_10.outputs.result == 'timeout' }}
+    runs-on: ubuntu-latest
+    outputs:
+      result: ${{ steps.download.outputs.result }}
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions/setup-node@v2
+        with:
+          node-version: '14'
+
+      # 安装环境
+      - name: Install Enviroment
+        run: |
+          sudo apt-get update
+          sudo apt-get install transmission-daemon
+          npm install
+          sudo service transmission-daemon stop
+          sudo node Initialize-transmission.js
+          sudo service transmission-daemon start
+
+      # 下载未完成文件
+      - name: Download Artifact
+        uses: actions/download-artifact@v2
+        with:
+          name: download_folder
+      - name: 'Decompress'
+        run: |
+          tar -zxvf uncomplete.tar.gz
+          rm -f uncomplete.tar.gz
+
+      # 解析种子
+      - name: Analyze
+        id: analyze
+        run: |
+          chmod 777 -R ./Offline
+          echo "::set-output name=taskid::$(node analyze.js)"
+
+      # 监视下载
+      - name: Watch Download
+        id: download
+        run: |
+          node watch.js ${{ steps.analyze.outputs.taskid }}
+          echo "::set-output name=result::$(cat download-result.txt)"
+
+      # 保存未完成下载
+      - name: 'Compress'
+        run: |
+          tar -czvf uncomplete.tar.gz *.torrent download-files.json list.txt last-file.txt Offline
+      - name: 'Upload Artifact'
+        uses: actions/upload-artifact@v2
+        with:
+          name: download_folder
+          path: uncomplete.tar.gz
+          retention-days: 1
+
+  extend_last:
+    needs: extend_11
+    if: ${{ needs.extend_11.outputs.result == 'timeout' }}
+    runs-on: ubuntu-latest
+    outputs:
+      result: ${{ steps.download.outputs.result }}
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions/setup-node@v2
+        with:
+          node-version: '14'
+
+      # 安装环境
+      - name: Install Enviroment
+        run: |
+          sudo apt-get update
+          sudo apt-get install transmission-daemon
+          npm install
+          sudo service transmission-daemon stop
+          sudo node Initialize-transmission.js
+          sudo service transmission-daemon start
+
+      # 下载未完成文件
+      - name: Download Artifact
+        uses: actions/download-artifact@v2
+        with:
+          name: download_folder
+      - name: 'Decompress'
+        run: |
+          tar -zxvf uncomplete.tar.gz
+          rm -f uncomplete.tar.gz
+
+      # 解析种子
+      - name: Analyze
+        id: analyze
+        run: |
+          chmod 777 -R ./Offline
+          echo "::set-output name=taskid::$(node analyze.js)"
+
+      # 监视下载
+      - name: Watch Download
+        id: download
+        run: |
+          node watch.js ${{ steps.analyze.outputs.taskid }} 1
+          echo "::set-output name=result::$(cat download-result.txt)"
+
+      # 保存未完成下载
+      - name: 'Compress'
+        run: |
+          tar -czvf uncomplete.tar.gz *.torrent download-files.json list.txt last-file.txt Offline
+      - name: 'Upload Artifact'
+        uses: actions/upload-artifact@v2
+        with:
+          name: download_folder
+          path: uncomplete.tar.gz
+          retention-days: 1
+
+  upload:
+    if: ${{ !failure() && !cancelled() && needs.download_start.outputs.result == 'timeout' }}
+    needs: [download_start, extend_last]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions/setup-node@v2
+        with:
+          node-version: '14'
+
+      # 安装环境
+      - name: Install Enviroment
+        run: |
+          npm install
+
+      # 下载已完成文件
+      - name: Download Artifact
+        uses: actions/download-artifact@v2
+        with:
+          name: download_folder
+      - name: 'Decompress'
+        run: |
+          tar -zxvf uncomplete.tar.gz
+          rm -f uncomplete.tar.gz
+          chmod 777 -R ./Offline
+
+      # 清理多余文件
+      - name: Remove
+        run: |
+          node remove.transmission.js
+
+      # 上传
+      - name: Upload
+        run: |
+          node upload.js
+        env:
+          QUEUE_DD_URL: ${{ secrets.URL }}
+          QUEUE_DD_USERNAME: ${{ secrets.USERNAME }}
+          QUEUE_DD_PASSWORD: ${{ secrets.PASSWORD }}
+          QUEUE_DB_URL: ${{ secrets.DB_URL }}
+          QUEUE_DB_APIKEY: ${{ secrets.DB_APIKEY }}
+
+      # 执行剩余任务
+      - name: Dispatch Next Task
+        run: |
+          node dispatchNext.js
+        env:
+          QUEUE_TOKEN: ${{ github.token }}
+          QUEUE_DISPATCH_TOKEN: ${{ secrets.TOKEN }}

@@ -1,0 +1,49 @@
+{
+  "name": "offline-download-to-docker-hub",
+  "version": "1.0.0",
+  "description": "offline-download-to-docker-hub",
+  "main": "upload.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gamekingv/offline-download-to-docker-hub.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/gamekingv/offline-download-to-docker-hub/issues"
+  },
+  "homepage": "https://github.com/gamekingv/offline-download-to-docker-hub#readme",
+  "devDependencies": {
+    "axios": "^0.21.1",
+    "babel-eslint": "^10.1.0",
+    "eslint": "^7.23.0"
+  },
+  "dependencies": {
+    "crypto": "^1.0.1",
+    "got": "^11.8.2",
+    "mongodb": "^3.6.6",
+    "request": "^2.88.2"
+  },
+  "eslintConfig": {
+    "env": {
+      "node": true
+    },
+    "parser": "babel-eslint",
+    "parserOptions": {
+      "ecmaVersion": 6,
+      "sourceType": "module"
+    },
+    "rules": {
+      "semi": "warn",
+      "quotes": [
+        "warn",
+        "single"
+      ],
+      "no-var": "error",
+      "no-unused-vars": "warn"
+    }
+  }
+}
