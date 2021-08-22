@@ -1,1 +1,2 @@
-https://sukebei.nyaa.si/download/2405985.torrent
+https://ccrhk-1253687700.cos.ap-hongkong.myqcloud.com/docker%2Fregistry%2Fv2%2Fblobs%2Fsha256%2Fdb%2Fdb11800bf0b28ad700a065ea3277c17812976f683007eeb7134e1a3bf8493ed3%2Fdata?q-sign-algorithm=sha1&q-ak=AKIDQRmsg7xgYDfqkOJGXWG7vqXy8H9VKR0H&q-sign-time=1629622972%3B1629624172&q-key-time=1629622972%3B1629624172&q-header-list=host&q-url-param-list=&q-signature=caed0c2a3bb57aaba33599db1b444141be77af79
+  out=Bloodstained.Ritual.of.the.Night.v1.21.0.58950-GOG.torrent
